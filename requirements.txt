@@ -1,0 +1,5 @@
+sympy
+openai
+google-genai
+pytest
+pandas
