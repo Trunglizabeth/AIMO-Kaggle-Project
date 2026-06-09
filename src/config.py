@@ -19,8 +19,20 @@ class Config:
     EXECUTION_TIMEOUT_SECONDS: int = 5
 
     def __post_init__(self):
-        """Validate configuration after initialization."""
-        if not self.LLM_API_KEY:
+        """Validate configuration after initialization.
+
+        By default, configuration should not fail on import because the project
+        supports mock LLM execution when no API key is available.
+        """
+        pass
+
+    def validate(self, require_api: bool = False):
+        """Validate configuration explicitly.
+
+        Args:
+            require_api (bool): If True, raise an error when no LLM_API_KEY is set.
+        """
+        if require_api and not self.LLM_API_KEY:
             raise ValueError(
                 "LLM_API_KEY environment variable not set. "
                 "Please set it before running the pipeline."

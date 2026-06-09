@@ -20,3 +20,10 @@ def test_execute_error():
     code = "result = 1/0"
     out = ex.execute_code(code, timeout=3)
     assert 'ZeroDivisionError' in out
+
+
+def test_execute_printed_result():
+    ex = PythonExecutor()
+    code = "print(42)"
+    out = ex.execute_code(code, timeout=3)
+    assert out == '42'

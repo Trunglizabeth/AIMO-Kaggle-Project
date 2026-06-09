@@ -22,7 +22,7 @@ Example:
     # outputs[1] = [response_1, response_2, ..., response_15] for 'Solve x=5'
 """
 
-from typing import List
+from typing import List, Optional
 
 
 class LocalLLMEngine:
@@ -40,7 +40,11 @@ class LocalLLMEngine:
         model: str = 'Qwen/Qwen2.5-Math-7B-Instruct-AWQ',
         quantization: str = 'awq',
         tensor_parallel_size: int = 1,
-        gpu_memory_utilization: float = 0.9
+        gpu_memory_utilization: float = 0.9,
+        temperature: float = 0.7,
+        top_p: float = 0.95,
+        max_tokens: int = 1024,
+        use_beam_search: bool = False,
     ):
         """Initialize the vLLM engine with model configuration.
         
@@ -55,6 +59,10 @@ class LocalLLMEngine:
         self.quantization = quantization
         self.tensor_parallel_size = int(tensor_parallel_size)
         self.gpu_memory_utilization = float(gpu_memory_utilization)
+        self.temperature = float(temperature)
+        self.top_p = float(top_p)
+        self.max_tokens = int(max_tokens)
+        self.use_beam_search = bool(use_beam_search)
 
         try:
             from vllm import LLM, SamplingParams
@@ -86,7 +94,15 @@ class LocalLLMEngine:
                 f"sufficient memory for quantization={self.quantization}."
             ) from e
 
-    def generate_batch(self, problem_texts: List[str], n: int = 15) -> List[List[str]]:
+    def generate_batch(
+        self,
+        problem_texts: List[str],
+        n: int = 15,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        use_beam_search: Optional[bool] = None,
+    ) -> List[List[str]]:
         """Generate multiple responses for each problem using vLLM batch inference.
         
         Uses vLLM's SamplingParams with n>1 to request multiple completions per prompt.
@@ -96,6 +112,10 @@ class LocalLLMEngine:
         Args:
             problem_texts: List of problem prompts (e.g., math questions in plain text)
             n: Number of completions to generate per problem (default 15 for self-consistency)
+            temperature: Sampling temperature for the generation.
+            top_p: Nucleus sampling probability.
+            max_tokens: Maximum number of tokens to generate.
+            use_beam_search: Whether to use beam search instead of sampling.
         
         Returns:
             List[List[str]]: For each input problem, returns a list of n generated text responses.
@@ -114,11 +134,11 @@ class LocalLLMEngine:
         # temperature=0.7 encourages diversity; higher n improves self-consistency
         try:
             sampling_params = self._SamplingParams(
-                temperature=0.7,
-                top_p=0.95,
+                temperature=temperature if temperature is not None else self.temperature,
+                top_p=top_p if top_p is not None else self.top_p,
                 n=n,
-                max_tokens=1024,
-                use_beam_search=False,  # Faster than beam search; suitable for n>1
+                max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
+                use_beam_search=use_beam_search if use_beam_search is not None else self.use_beam_search,
             )
         except TypeError as e:
             raise RuntimeError(

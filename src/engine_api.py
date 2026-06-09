@@ -12,6 +12,7 @@ local development and demos.
 from typing import Optional
 import os
 import re
+import time
 
 
 # SYSTEM_PROMPT instructs the LLM to behave as an expert mathematical programmer
@@ -51,11 +52,23 @@ class LLMEngineAPI:
     Initialization:
         - By default, the API key is read from `src.config.config.LLM_API_KEY` if that
           object exists, otherwise from the `LLM_API_KEY` environment variable.
-        - To enable local mock mode (no API key required), set `ALLOW_MOCK_LLM=true` in
-          the environment.
+        - To enable local mock mode, either set `ALLOW_MOCK_LLM=true` or pass
+          `mock_mode=True` to the constructor.
     """
 
-    def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+        mock_mode: Optional[bool] = None,
+        use_vllm: bool = False,
+        vllm_model: Optional[str] = None,
+        vllm_quantization: str = 'awq',
+        vllm_gpu_memory_utilization: float = 0.9,
+        vllm_temperature: float = 0.7,
+        vllm_top_p: float = 0.95,
+        vllm_max_tokens: int = 1024,
+    ):
         # Prefer explicit API key
         if api_key:
             self.api_key = api_key
@@ -74,28 +87,62 @@ class LLMEngineAPI:
             except Exception:
                 self.api_key = os.getenv('LLM_API_KEY', '')
 
-        # Allow mock mode via environment variable or explicit flag (future)
+        # Allow mock mode via explicit parameter or environment variable
         allow_mock_env = os.getenv('ALLOW_MOCK_LLM', 'false').lower() in ('1', 'true', 'yes')
-        self.allow_mock = allow_mock_env
+        self.allow_mock = mock_mode if mock_mode is not None else allow_mock_env
+        self.use_vllm = use_vllm
+        self.vllm_model = vllm_model
+        self.vllm_quantization = vllm_quantization
+        self.vllm_gpu_memory_utilization = vllm_gpu_memory_utilization
+        self.vllm_temperature = vllm_temperature
+        self.vllm_top_p = vllm_top_p
+        self.vllm_max_tokens = vllm_max_tokens
+
+        # model name / settings
+        try:
+            from src import config as _cfg
+            config_model = getattr(_cfg, 'MODEL_NAME', None) or (hasattr(_cfg, 'config') and getattr(_cfg.config, 'MODEL_NAME', None))
+        except Exception:
+            config_model = None
+
+        default_model = 'Qwen/Qwen2.5-Math-7B-Instruct-AWQ' if self.use_vllm else 'gpt-4o-mini'
+        self.model_name = model_name or vllm_model or config_model or default_model
+
+        if self.use_vllm:
+            self._provider = 'vllm'
+            self._client = None
+            try:
+                from src.vllm_engine import LocalLLMEngine
+                self._local_engine = LocalLLMEngine(
+                    model=self.model_name,
+                    quantization=self.vllm_quantization,
+                    gpu_memory_utilization=self.vllm_gpu_memory_utilization,
+                    temperature=self.vllm_temperature,
+                    top_p=self.vllm_top_p,
+                    max_tokens=self.vllm_max_tokens,
+                )
+            except Exception as e:
+                if self.allow_mock:
+                    self._provider = 'mock'
+                    self._client = None
+                    self._local_engine = None
+                else:
+                    raise
+            return
 
         if not self.api_key and not self.allow_mock:
-            raise ValueError('LLM API key not set. Set LLM_API_KEY in environment or set ALLOW_MOCK_LLM=true to enable mock mode.')
+            raise ValueError('LLM API key not set. Set LLM_API_KEY in environment or set ALLOW_MOCK_LLM=true or mock_mode=True to enable mock mode.')
 
         # If no API key and mock mode requested, prefer mock provider and skip client imports
         if not self.api_key and self.allow_mock:
             self._provider = 'mock'
             self._client = None
+            self._local_engine = None
             return
-
-        # model name / settings
-        try:
-            from src import config as _cfg
-            self.model_name = model_name or getattr(_cfg, 'MODEL_NAME', None) or (hasattr(_cfg, 'config') and getattr(_cfg.config, 'MODEL_NAME', None)) or 'gpt-4o-mini'
-        except Exception:
-            self.model_name = model_name or 'gpt-4o-mini'
 
         self._provider = None
         self._client = None
+        self._local_engine = None
 
         # Prepare an LLM client: prefer OpenAI, fall back to Google GenAI
         try:
@@ -211,6 +258,27 @@ result = solve()
 ```
 """
 
+        if self._provider == 'vllm':
+            outputs = self._safe_vllm_generate_batch([
+                problem_text
+            ], n=1, temperature=temperature, top_p=self.vllm_top_p, max_tokens=self.vllm_max_tokens)
+            # outputs is List[List[str]] -> return first completion text or empty string
+            try:
+                return outputs[0][0] if outputs and outputs[0] else ''
+            except Exception:
+                if self.allow_mock:
+                    return """```python
+import sympy as sp
+
+def solve():
+    # Mock fallback due to vLLM error
+    return 0
+
+result = solve()
+```
+"""
+                raise
+
         # Prepare API call params
         client = self._client
         params = {
@@ -286,7 +354,130 @@ result = solve()
 ```
 """
             return f'Error calling LLM API: {type(e).__name__}: {str(e)}'
-    
+
+    def _safe_vllm_generate_batch(self, problem_texts, n=1, temperature=None, top_p=None, max_tokens=None, retries: int = 1):
+        """Call the LocalLLMEngine.generate_batch with defensive checks and optional retries.
+
+        Returns a List[List[str]] where each inner list has up to `n` strings.
+        If generation fails and `allow_mock` is True, falls back to mock outputs.
+        """
+        if not hasattr(self, '_local_engine') or self._local_engine is None:
+            # Try to lazily initialize once
+            try:
+                from src.vllm_engine import LocalLLMEngine
+                self._local_engine = LocalLLMEngine(
+                    model=self.model_name,
+                    quantization=self.vllm_quantization,
+                    gpu_memory_utilization=self.vllm_gpu_memory_utilization,
+                    temperature=self.vllm_temperature,
+                    top_p=self.vllm_top_p,
+                    max_tokens=self.vllm_max_tokens,
+                )
+            except Exception as e:
+                if self.allow_mock:
+                    # Return mock repeated outputs
+                    mock = self.generate_code(problem_texts[0], temperature=temperature)
+                    return [[mock] * n for _ in problem_texts]
+                raise RuntimeError(f'Failed to initialize local vLLM engine: {e}') from e
+
+        attempt = 0
+        last_err = None
+        while attempt <= retries:
+            try:
+                outputs = self._local_engine.generate_batch(
+                    problem_texts,
+                    n=n,
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_tokens=max_tokens,
+                )
+                # Validate structure: expect list of lists
+                if outputs is None:
+                    raise RuntimeError('vLLM returned None outputs')
+                if not isinstance(outputs, list):
+                    # Try to coerce into expected format
+                    outputs = [[str(outputs) for _ in range(n)]]
+                # Ensure each entry is a list
+                normalized = []
+                for o in outputs:
+                    if isinstance(o, list):
+                        normalized.append([str(x) for x in o])
+                    else:
+                        normalized.append([str(o) for _ in range(n)])
+                return normalized
+            except Exception as e:
+                last_err = e
+                attempt += 1
+                if attempt > retries:
+                    break
+                time.sleep(0.5 * attempt)
+
+        # If we reach here, generation failed
+        if self.allow_mock:
+            mock = self.generate_code(problem_texts[0], temperature=temperature)
+            return [[mock] * n for _ in problem_texts]
+        raise RuntimeError(f'vLLM generation failed after {retries+1} attempts: {last_err}') from last_err
+
+    def generate_code_samples(self, problem_text: str, n: int = 1, temperature: Optional[float] = None) -> list[str]:
+        """Generate multiple raw outputs from the LLM for the same problem.
+
+        This is useful for self-consistency / majority voting pipelines.
+        """
+        if n <= 0:
+            return []
+
+        if self._provider == 'mock':
+            return [self.generate_code(problem_text, temperature=temperature) for _ in range(n)]
+
+        if self._provider == 'vllm':
+            outputs = self._safe_vllm_generate_batch([
+                problem_text
+            ], n=n, temperature=temperature, top_p=self.vllm_top_p, max_tokens=self.vllm_max_tokens)
+            try:
+                return outputs[0] if outputs and outputs[0] else []
+            except Exception:
+                if self.allow_mock:
+                    return [self.generate_code(problem_text, temperature=temperature) for _ in range(n)]
+                raise
+
+        if self._provider == 'openai':
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": problem_text},
+            ]
+            params = {
+                'model': self.model_name,
+                'messages': messages,
+                'n': n,
+            }
+            if temperature is not None:
+                params['temperature'] = float(temperature)
+            try:
+                from src import config as _cfg
+                if hasattr(_cfg, 'config') and hasattr(_cfg.config, 'MAX_TOKENS'):
+                    params['max_tokens'] = int(_cfg.config.MAX_TOKENS)
+            except Exception:
+                pass
+
+            resp = self._client.ChatCompletion.create(**params)
+            outputs = []
+            if resp and 'choices' in resp:
+                for choice in resp['choices']:
+                    message = choice.get('message', {})
+                    content = message.get('content') if isinstance(message, dict) else None
+                    if not content:
+                        content = choice.get('text', '')
+                    outputs.append(content or '')
+            return outputs
+
+        if self._provider == 'google':
+            outputs = []
+            for _ in range(n):
+                outputs.append(self.generate_code(problem_text, temperature=temperature))
+            return outputs
+
+        return [self.generate_code(problem_text, temperature=temperature) for _ in range(n)]
+
     def solve_with_majority_voting(self, problem_text: str, n: Optional[int] = None, timeout: int = 5) -> int:
         """Run the full pipeline `n` times and return the majority-voted integer answer.
 
@@ -327,32 +518,60 @@ result = solve()
                     return None
 
         votes = []
-        for i in range(runs):
-            raw = self.generate_code(problem_text)
-            code = parser.extract_python_code(raw)
-            if not code:
-                # skip this sample
-                continue
 
-            out = executor.execute_code(code, timeout=timeout)
-
-            # Ignore errors/timeouts
-            if out == 'Timeout Error':
-                continue
-            if isinstance(out, str) and out.startswith('Error'):
-                # includes SyntaxError, ZeroDivisionError, etc.
-                continue
-
-            candidate = _to_int(out)
-            if candidate is None:
-                continue
-            # normalize to non-negative modulo 1000 as required by pipeline
+        if self._provider == 'vllm':
             try:
-                candidate = int(candidate) % 1000
+                raw_outputs = self._safe_vllm_generate_batch(
+                    [problem_text],
+                    n=runs,
+                    temperature=self.vllm_temperature,
+                    top_p=self.vllm_top_p,
+                    max_tokens=self.vllm_max_tokens,
+                )
+                raw_list = raw_outputs[0] if raw_outputs else []
             except Exception:
-                continue
+                raw_list = []
 
-            votes.append(candidate)
+            for raw in raw_list:
+                code = parser.extract_python_code(raw)
+                if not code:
+                    continue
+
+                out = executor.execute_code(code, timeout=timeout)
+                if out == 'Timeout Error':
+                    continue
+                if isinstance(out, str) and out.startswith('Error'):
+                    continue
+
+                candidate = _to_int(out)
+                if candidate is None:
+                    continue
+                try:
+                    candidate = int(candidate) % 1000
+                except Exception:
+                    continue
+                votes.append(candidate)
+        else:
+            for i in range(runs):
+                raw = self.generate_code(problem_text)
+                code = parser.extract_python_code(raw)
+                if not code:
+                    continue
+
+                out = executor.execute_code(code, timeout=timeout)
+                if out == 'Timeout Error':
+                    continue
+                if isinstance(out, str) and out.startswith('Error'):
+                    continue
+
+                candidate = _to_int(out)
+                if candidate is None:
+                    continue
+                try:
+                    candidate = int(candidate) % 1000
+                except Exception:
+                    continue
+                votes.append(candidate)
 
         if not votes:
             return 0

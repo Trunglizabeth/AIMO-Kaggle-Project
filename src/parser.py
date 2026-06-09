@@ -66,6 +66,9 @@ class ResponseParser:
             return matches[-1].strip()
 
         # No markdown code blocks found - try to detect if text looks like code
+        # Remove common markdown formatting characters first
+        cleaned_text = text.strip()
+
         # If the LLM returned an API error message, treat it as no-code
         error_indicators = [
             'Error calling LLM API',
@@ -74,8 +77,6 @@ class ResponseParser:
         ]
         if any(e in cleaned_text for e in error_indicators):
             return ""
-        # Remove common markdown formatting characters
-        cleaned_text = text.strip()
 
         # Heuristics to detect if text looks like Python code
         code_indicators = [
@@ -168,3 +169,49 @@ class ResponseParser:
         else:
             # Unbalanced braces - return empty string or partial match
             return ""
+
+    @staticmethod
+    def extract_numeric_answer(text: str) -> str:
+        """
+        Extract a numeric answer from raw LLM output.
+
+        This method handles several common answer formats, including:
+        - LaTeX boxed answers: \boxed{42}
+        - Explicit assignments: result = 42
+        - Answer labels: Answer: 42, Final answer: 42
+        - Printed integers: print(42)
+        - Simple trailing numbers in the output.
+
+        Args:
+            text (str): Raw LLM output text.
+
+        Returns:
+            str: The extracted numeric answer as text, or an empty string if no
+                 candidate numeric answer is found.
+        """
+        if not text:
+            return ""
+
+        # Prefer boxed answers first
+        boxed = ResponseParser.extract_boxed_answer(text)
+        if boxed:
+            return boxed.strip()
+
+        patterns = [
+            r'result\s*=\s*([+-]?\d+)',
+            r'final answer\s*[:=]\s*([+-]?\d+)',
+            r'answer\s*[:=]\s*([+-]?\d+)',
+            r'print\(\s*([+-]?\d+)\s*\)',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+
+        # If the output is a single numeric token or ends with one, return that number.
+        tokens = re.findall(r'[+-]?\d+', text)
+        if tokens:
+            return tokens[-1].strip()
+
+        return ""

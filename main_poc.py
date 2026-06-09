@@ -23,10 +23,11 @@ SAMPLE_PROBLEM = "Find the sum of the roots of the equation x^2 - 5*x + 6 = 0."
 def run_pipeline(problem_text: str):
     # Step A: Call LLM (with graceful fallback to a mock response)
     try:
-        # If no API key is set, enable mock mode via env var so the engine can run locally
-        if not os.getenv('LLM_API_KEY'):
+        use_vllm = os.getenv('USE_VLLM', 'false').lower() in ('1', 'true', 'yes')
+        if not os.getenv('LLM_API_KEY') and not use_vllm:
             os.environ.setdefault('ALLOW_MOCK_LLM', 'true')
-        engine = LLMEngineAPI()
+
+        engine = LLMEngineAPI(use_vllm=use_vllm)
         raw = engine.generate_code(problem_text)
     except Exception as e:
         raw = (

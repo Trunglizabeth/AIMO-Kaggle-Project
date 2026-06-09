@@ -10,18 +10,32 @@ def _run_code_worker(code_string: str, queue: Queue) -> None:
     """
     try:
         # Import inside worker to reduce pickling across processes
+        import io as _io
         import math as _math
         import sympy as _sympy
+        import sys as _sys
+        from contextlib import redirect_stdout as _redirect_stdout
 
         exec_globals = {
             "math": _math,
             "sympy": _sympy,
         }
 
-        exec(code_string, exec_globals)
+        stdout_buffer = _io.StringIO()
+        with _redirect_stdout(stdout_buffer):
+            exec(code_string, exec_globals)
 
         result = exec_globals.get("result", None)
-        queue.put(("success", str(result)))
+        if result is not None:
+            queue.put(("success", str(result)))
+            return
+
+        stdout_value = stdout_buffer.getvalue().strip()
+        if stdout_value:
+            queue.put(("success", stdout_value))
+            return
+
+        queue.put(("error", "No result returned from subprocess"))
 
     except SyntaxError as e:
         queue.put(("error", f"SyntaxError: {str(e)}"))

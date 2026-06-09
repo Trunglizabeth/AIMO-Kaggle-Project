@@ -3,3 +3,7 @@ openai
 google-genai
 pytest
 pandas
+datasets
+matplotlib
+seaborn
+python-pptx

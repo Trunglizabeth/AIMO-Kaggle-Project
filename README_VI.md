@@ -1,16 +1,16 @@
 # AIMO-Kaggle-Project
 
-Pipeline giải toán AI dành cho Olympic Toán học (AIMO) theo hướng Program-of-Thought (PoT).
+Pipeline giải toán Olympic Toán học AI (AIMO) theo hướng Program-of-Thought (PoT).
 
-Kho này cung cấp một PoC pipeline gồm các bước:
+Khoản này cung cấp PoC pipeline cho các bước:
 
-- Gửi đề toán đến LLM (OpenAI hoặc Google GenAI)
+- Gửi đề toán cho LLM (OpenAI hoặc Google GenAI)
 - Trích xuất mã Python từ phản hồi của LLM
-- Thực thi mã Python trong môi trường sandbox an toàn
+- Thực thi mã Python trong sandbox an toàn
 
 ## Hướng dẫn nhanh
 
-1. Cài đặt phụ thuộc:
+1. Cài phụ thuộc:
 
 ```bash
 pip install -r requirements.txt
@@ -30,6 +30,16 @@ $env:LLM_API_KEY = "your_api_key"
 python main_poc.py
 ```
 
+## Chuẩn bị dữ liệu mẫu
+
+Nếu bạn muốn tạo dữ liệu AIME mẫu từ Hugging Face:
+
+```bash
+python scripts/prepare_data.py
+```
+
+Script này tải bộ dữ liệu `gneubig/aime-1983-2024`, lấy 50 bài mẫu và lưu vào `data/train.csv`.
+
 ## Chạy local vLLM
 
 ```powershell
@@ -37,7 +47,7 @@ $env:USE_VLLM = "true"
 python main_poc.py
 ```
 
-## Chạy majority voting
+## Chạy majority voting evaluation
 
 ```powershell
 $env:USE_VLLM = "true"
@@ -49,24 +59,6 @@ Hoặc dùng wrapper CLI:
 ```powershell
 python scripts/run_evaluation.py --csv data/train.csv --report data/evaluation_report.csv --limit 10 --use-vllm --use-majority-voting --timeout 10 --debug
 ```
-
-## Chuẩn bị dữ liệu mẫu
-
-Tạo dữ liệu AIME mẫu từ Hugging Face:
-
-```bash
-python scripts/prepare_data.py --output data/train.csv --count 50 --seed 42
-```
-
-Tùy chọn:
-
-- `--output`: đường dẫn CSV đầu ra.
-- `--dataset`: Hugging Face dataset identifier.
-- `--split`: split dataset.
-- `--count`: số lượng mẫu lấy.
-- `--seed`: seed cho thao tác shuffle.
-
-Script này sẽ tải bộ dữ liệu `gneubig/aime-1983-2024`, lấy số lượng mẫu chỉ định và lưu xuống file output.
 
 ## Hỗ trợ Kaggle offline
 
@@ -100,47 +92,38 @@ python scripts/deploy_to_kaggle.py \
   --allow-mock
 ```
 
-## Phân tích báo cáo đánh giá (Sprint 3)
+## Phân tích đánh giá (Sprint 3)
 
-Sau khi tạo `data/evaluation_report.csv`, chạy:
-
-```bash
-python scripts/analyze_evaluation.py --report data/evaluation_report.csv --top-errors 10 --top-wrong 5
-```
-
-Bạn cũng có thể xuất báo cáo tổng hợp sang JSON hoặc Markdown:
+Sau khi có `data/evaluation_report.csv`, chạy:
 
 ```bash
 python scripts/analyze_evaluation.py --report data/evaluation_report.csv --output-summary data/report_summary.json --output-markdown data/report_summary.md
 ```
 
-Hoặc chạy end-to-end từ đánh giá đến phân tích (và tạo submission nếu cần):
+Hoặc chạy end-to-end đánh giá và phân tích:
 
 ```bash
 python scripts/evaluate_and_analyze.py --csv data/train.csv --report data/evaluation_report.csv --use-vllm --use-majority-voting --output-summary data/report_summary.json --output-markdown data/report_summary.md
 ```
 
-Script này in ra và phân loại:
+Script này in:
 
 - tổng số mẫu
 - số dự đoán đúng
-- số dự đoán sai
 - độ chính xác
-- số mẫu thiếu dự đoán
+- số mẫu không có dự đoán
 - số lỗi timeout
 - top lỗi xuất hiện nhiều nhất
-- phân loại lỗi theo nhóm
-- ví dụ sai tiêu biểu
 
-## Các tệp quan trọng
+## Các tệp chính
 
 - `src/engine_api.py`: wrapper LLM với `LLMEngineAPI` và `SYSTEM_PROMPT`.
 - `src/parser.py`: `ResponseParser` để trích xuất mã Python.
 - `src/executor.py`: `PythonExecutor` để thực thi mã an toàn.
 - `main_poc.py`: chạy pipeline end-to-end.
-- `scripts/run_evaluation.py`: CLI đánh giá.
+- `scripts/run_evaluation.py`: CLI chạy đánh giá.
 - `scripts/generate_submission.py`: tạo submission Kaggle.
-- `scripts/deploy_to_kaggle.py`: triển khai và cài wheel offline trên Kaggle.
+- `scripts/deploy_to_kaggle.py`: deploy và cài offline wheel trên Kaggle.
 - `scripts/analyze_evaluation.py`: phân tích báo cáo đánh giá.
 
 ## Testing
@@ -151,26 +134,30 @@ Chạy unit test:
 pytest -q
 ```
 
-## Ghi chú
-
-- Thư mục `data/` được dùng cho dataset lớn và có thể không được commit.
-- Trên Windows, cần bảo vệ entry point bằng `if __name__ == '__main__':` vì multiprocessing.
-
 ## Sprint 2
 
-Sprint 2 đã hoàn tất với:
+Sprint 2 đã hoàn thành với:
 
 - hỗ trợ local vLLM
 - majority voting
-- CLI đánh giá và tạo submission
-- hỗ trợ Kaggle offline
-- verify wheel packages
+- evaluation CLI
+- submission generation
+- hỗ trợ offline Kaggle
 
 ## Sprint 3
 
-Sprint 3 đã hoàn thiện với các mục tiêu sau:
+Sprint 3 đã hoàn thiện với:
 
-- phân tích báo cáo đánh giá với `scripts/analyze_evaluation.py`
+- phân tích báo cáo đánh giá bằng `scripts/analyze_evaluation.py`
 - chạy end-to-end đánh giá + phân tích bằng `scripts/evaluate_and_analyze.py`
-- mở rộng chuẩn bị dữ liệu với `scripts/prepare_data.py`
+- mở rộng chuẩn bị dữ liệu bằng `scripts/prepare_data.py`
+- hoàn thiện luồng Kaggle end-to-end bằng `scripts/generate_submission.py`, `scripts/deploy_to_kaggle.py`, `scripts/verify_offline_packages.py`, và `scripts/prepare_kaggle_offline.py`
+
+## Sprint 3
+
+Sprint 3 đã hoàn thiện với:
+
+- phân tích báo cáo đánh giá bằng `scripts/analyze_evaluation.py`
+- chạy end-to-end đánh giá + phân tích bằng `scripts/evaluate_and_analyze.py`
+- mở rộng chuẩn bị dữ liệu bằng `scripts/prepare_data.py`
 - hoàn thiện luồng Kaggle end-to-end bằng `scripts/generate_submission.py`, `scripts/deploy_to_kaggle.py`, `scripts/verify_offline_packages.py`, và `scripts/prepare_kaggle_offline.py`

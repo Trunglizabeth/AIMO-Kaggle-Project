@@ -1,0 +1,24 @@
+flowchart TD
+  A[Input Problem] --> B[Prompt Template]
+  B --> C{LLM Engine}
+  C -->|OpenAI / Google / vLLM| D[Raw LLM Output]
+  D --> E[Response Parser]
+  E --> F[Extracted Code]
+  E --> G[Raw Numeric Fallback]
+  F --> H[Sandboxed Executor]
+  H --> I[Execution Output]
+  G --> I
+  I --> J[Answer Normalizer]
+  J --> K[Evaluation & Voting]
+  K --> L[Report / Submission]
+
+  subgraph LLM Layer
+    C
+  end
+  subgraph Postprocessing
+    E --> F
+    F --> H
+    G --> I
+    H --> I
+    I --> J
+  end
