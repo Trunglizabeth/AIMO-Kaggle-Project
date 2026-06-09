@@ -49,6 +49,16 @@ def test_solve_with_majority_voting(monkeypatch):
     assert answer == 4
 
 
+def test_generate_text_with_custom_system_prompt(monkeypatch):
+    monkeypatch.delenv('LLM_API_KEY', raising=False)
+    engine = LLMEngineAPI(mock_mode=True)
+    result = engine.generate_text(
+        'Find the area of a circle with radius 2',
+        system_prompt='Classify the following problem as algebra, geometry, or other.',
+    )
+    assert result in {'algebra', 'geometry', 'other'}
+
+
 def test_use_vllm_backend(monkeypatch):
     monkeypatch.delenv('LLM_API_KEY', raising=False)
 

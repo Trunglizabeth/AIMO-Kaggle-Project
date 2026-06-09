@@ -19,6 +19,7 @@ from src.config import config
 from src.engine_api import LLMEngineAPI
 from src.parser import ResponseParser
 from src.executor import PythonExecutor
+from src.router import MathRouter
 
 
 def safe_int(x):
@@ -58,6 +59,7 @@ def evaluate(
 
     parser = ResponseParser()
     executor = PythonExecutor()
+    router = MathRouter(engine)
     results = []
 
     for _, row in df.iterrows():
@@ -94,9 +96,32 @@ def evaluate(
             })
             continue
 
-        raw = engine.generate_code(problem)
-        code = ResponseParser.extract_python_code(raw)
-        prediction_method = 'code'
+        route = router.classify(problem)
+        prediction_method = None
+
+        if route == 'geometry':
+            # Use Chain-of-Thought textual reasoning path
+            raw_cot = engine.generate_text(problem)
+            predicted_raw = ResponseParser.extract_numeric_answer(raw_cot)
+            if predicted_raw:
+                predicted_answer = safe_int(predicted_raw) or predicted_raw
+                prediction_method = 'cot'
+                try:
+                    if true_answer is not None and predicted_answer is not None:
+                        is_correct = ((int(predicted_answer) % 1000) == (int(true_answer) % 1000))
+                    else:
+                        is_correct = str(predicted_answer) == str(true_answer_raw)
+                except Exception:
+                    is_correct = False
+            else:
+                # Fallback to PoT if CoT did not yield numeric answer
+                raw = engine.generate_code(problem)
+                code = ResponseParser.extract_python_code(raw)
+                prediction_method = 'code'
+        else:
+            raw = engine.generate_code(problem)
+            code = ResponseParser.extract_python_code(raw)
+            prediction_method = 'code'
 
         if debug:
             print(f'--- Example {example_id} ---')
@@ -104,7 +129,7 @@ def evaluate(
             print(f'Raw LLM output:\n{raw}')
             print(f'Extracted code:\n{code}')
 
-        if not code:
+        if prediction_method == 'code' and not code:
             raw_answer = ResponseParser.extract_numeric_answer(raw)
             if raw_answer:
                 predicted_answer = safe_int(raw_answer) or raw_answer

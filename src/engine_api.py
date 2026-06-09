@@ -45,6 +45,10 @@ def solve():
 result = solve()
 """
 
+# CoT system prompt (for chain-of-thought/text reasoning)
+SYSTEM_COT_PROMPT = """You are an expert mathematician. When given a problem, provide a clear chain-of-thought reasoning in natural language, step by step, and end with a line starting with 'Final answer:' followed by the numeric answer. Do not output code. Keep reasoning concise but complete.
+"""
+
 
 class LLMEngineAPI:
     """Lightweight wrapper to call an LLM and return raw text responses.
@@ -353,6 +357,95 @@ def solve():
 result = solve()
 ```
 """
+            return f'Error calling LLM API: {type(e).__name__}: {str(e)}'
+
+    def generate_text(self, problem_text: str, temperature: Optional[float] = None, system_prompt: Optional[str] = None) -> str:
+        """Generate a textual answer for the given problem.
+
+        Returns raw text produced by the LLM. In mock mode it returns a simple
+        response, and a custom `system_prompt` can be provided for tasks like
+        classification.
+        """
+        messages = [
+            {"role": "system", "content": system_prompt or SYSTEM_COT_PROMPT},
+            {"role": "user", "content": problem_text},
+        ]
+
+        if self._provider == 'mock':
+            if system_prompt and 'classify' in system_prompt.lower():
+                text = problem_text.lower()
+                if any(k in text for k in ('triangle', 'circle', 'square', 'rectangle', 'angle', 'perimeter', 'area', 'volume', 'sphere', 'cylinder', 'cone')):
+                    return 'geometry'
+                if any(k in text for k in ('solve', 'equation', 'integer', 'mod', 'remainder', 'prime', 'count', 'digits', 'sum of')):
+                    return 'algebra'
+                return 'other'
+
+            # Very simple mock CoT for geometry-like prompts
+            if any(k in problem_text.lower() for k in ('triangle', 'circle', 'angle', 'perimeter', 'area', 'volume')):
+                return "I reason about the geometry properties and compute step by step. Final answer: 42"
+            # fallback
+            return "I reason step by step. Final answer: 0"
+
+        # vLLM path
+        if self._provider == 'vllm':
+            outputs = self._safe_vllm_generate_batch([problem_text], n=1, temperature=temperature, top_p=self.vllm_top_p, max_tokens=self.vllm_max_tokens)
+            try:
+                return outputs[0][0] if outputs and outputs[0] else ''
+            except Exception:
+                if self.allow_mock:
+                    return "Final answer: 0"
+                raise
+
+        # Generic text generation via chat APIs
+        client = self._client
+        params = {
+            'model': self.model_name,
+            'messages': messages,
+        }
+        if temperature is not None:
+            params['temperature'] = float(temperature)
+
+        try:
+            if self._provider == 'openai':
+                resp = client.ChatCompletion.create(**params)
+                if resp and 'choices' in resp and len(resp['choices']) > 0:
+                    message = resp['choices'][0].get('message', {})
+                    content = message.get('content') if isinstance(message, dict) else None
+                    if not content:
+                        content = resp['choices'][0].get('text', '')
+                    return content or ''
+                return str(resp)
+
+            elif self._provider == 'google':
+                genai = client
+                genai_kwargs = {
+                    'model': self.model_name or 'models/text-bison-001',
+                    'messages': messages,
+                }
+                if temperature is not None:
+                    genai_kwargs['temperature'] = float(temperature)
+
+                resp = genai.chat.completions.create(**genai_kwargs)
+                try:
+                    if hasattr(resp, 'candidates') and len(resp.candidates) > 0:
+                        cand = resp.candidates[0]
+                        content = getattr(cand, 'content', None)
+                        if content is None and isinstance(cand, dict):
+                            content = cand.get('content') or cand.get('display') or cand.get('text')
+                        if isinstance(content, (list, tuple)):
+                            content = ''.join([seg.get('text', '') if isinstance(seg, dict) else str(seg) for seg in content])
+                        return content or str(resp)
+                except Exception:
+                    pass
+                if isinstance(resp, dict) and 'candidates' in resp and len(resp['candidates']) > 0:
+                    cand = resp['candidates'][0]
+                    if isinstance(cand, dict):
+                        return cand.get('content', cand.get('text', '')) or str(resp)
+                return str(resp)
+
+        except Exception as e:
+            if self.allow_mock:
+                return "Final answer: 0"
             return f'Error calling LLM API: {type(e).__name__}: {str(e)}'
 
     def _safe_vllm_generate_batch(self, problem_texts, n=1, temperature=None, top_p=None, max_tokens=None, retries: int = 1):
