@@ -7,3 +7,4 @@ datasets
 matplotlib
 seaborn
 python-pptx
+reportlab
