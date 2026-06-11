@@ -1,7 +1,7 @@
 # src/voting.py
 from statistics import mode
 from collections import Counter
-from src.config import N_SAMPLES
+from src.config import config
 
 
 def majority_vote(results: list) -> int:

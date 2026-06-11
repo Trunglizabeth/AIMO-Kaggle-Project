@@ -1,9 +1,12 @@
 # src/engine.py
 import os
-from src.config import (
-    MODEL_PATH, MAX_TOKENS, GPU_MEMORY_UTILIZATION,
-    N_SAMPLES, TEMPERATURE
-)
+from src.config import config
+
+MODEL_PATH = config.MODEL_PATH
+MAX_TOKENS = config.MAX_TOKENS
+GPU_MEMORY_UTILIZATION = config.GPU_MEMORY_UTILIZATION
+N_SAMPLES = config.MAJORITY_VOTING_N
+TEMPERATURE = config.TEMPERATURE
 
 def is_kaggle() -> bool:
     return os.path.exists("/kaggle")
